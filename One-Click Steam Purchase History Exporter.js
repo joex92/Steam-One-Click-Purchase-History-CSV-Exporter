@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Steam Purchase History Exporter
 // @namespace    https://github.com/joex92/Steam-One-Click-Purchase-History-CSV-Exporter
-// @version      1.5
+// @version      1.6
 // @description  Export Steam account purchase history to a CSV file.
 // @author       JoeX92 & Gemini AI Pro
 // @match        https://store.steampowered.com/account/history*
@@ -45,11 +45,22 @@
     }
 
     // Extracts the numeric portion of a price string, keeping positive (+) or negative (-) signs
+    // even if a currency symbol separates the sign from the number (e.g., "-$5.00" becomes "-5.00")
     function extractNumber(str) {
         if (!str) return '';
-        // Match an optional + or -, followed by any combination of digits, decimals, or commas
-        let match = str.match(/[+-]?[\d.,]+/);
-        return match ? match[0] : '';
+        
+        let sign = '';
+        let signIdx = str.search(/[+-]/);
+        let numIdx = str.search(/\d/);
+        
+        // If there's a plus or minus sign, and it appears before the first digit, capture it
+        if (signIdx !== -1 && (numIdx === -1 || signIdx < numIdx)) {
+            sign = str[signIdx];
+        }
+        
+        // Extract the actual digits, commas, and decimals
+        let match = str.match(/[\d.,]+/);
+        return match ? sign + match[0] : '';
     }
 
     // Extracts the currency code (e.g., USD, EUR) or a standard currency symbol
