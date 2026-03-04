@@ -150,3 +150,189 @@
             }
 
             window.scrollTo(0, document.body.scrollHeight);
+            
+            let loadMoreBtn = document.getElementById('load_more_button');
+            if (loadMoreBtn && window.getComputedStyle(loadMoreBtn).display !== 'none') {
+                loadMoreBtn.click();
+            }
+            
+            let currentHeight = document.body.scrollHeight;
+            let loadingEl = document.getElementById('wallet_history_loading');
+            let isLoading = loadingEl && window.getComputedStyle(loadingEl).display !== 'none';
+
+            if (currentHeight === prevHeight && !isLoading) {
+                unchangedCount++;
+                if (unchangedCount >= 6) { 
+                    clearInterval(interval);
+                    window.scrollTo(0, 0); 
+                    onComplete();
+                }
+            } else {
+                unchangedCount = 0;
+                prevHeight = currentHeight;
+            }
+        }, 1000);
+    }
+
+    function escapeCSV(value) {
+        if (value == null) return '""';
+        let str = value.toString().trim().replace(/"/g, '""');
+        return `"${str}"`;
+    }
+
+    function exportDataToCSV() {
+        let rows = document.querySelectorAll('.wallet_history_table tbody tr.wallet_table_row');
+        let data = [];
+        let paymentColumns = new Set(); 
+
+        rows.forEach(row => {
+            let rawDate = row.querySelector('.wht_date') ? row.querySelector('.wht_date').innerText.trim() : '';
+            let dateCol = parseAndFormatSteamDate(rawDate);
+            
+            let itemsCol = '';
+            let itemsTd = row.querySelector('.wht_items');
+            if (itemsTd) {
+                itemsCol = itemsTd.innerText.trim().replace(/\s*\n\s*/g, ' | ');
+            }
+            
+            let rawPrice = '';
+            let discountCol = '';
+            let basePriceTd = row.querySelector('.wht_base_price');
+            
+            if (basePriceTd) {
+                let discountedDiv = basePriceTd.querySelector('.wht_base_price_discounted');
+                if (discountedDiv) {
+                    let dPct = discountedDiv.querySelector('.wht_discount_pct');
+                    let pOrig = discountedDiv.querySelector('.wht_original_price');
+                    discountCol = dPct ? dPct.innerText.trim() : '';
+                    rawPrice = pOrig ? pOrig.innerText.trim() : '';
+                } else {
+                    rawPrice = basePriceTd.innerText.trim();
+                }
+            }
+            
+            let rawTax = row.querySelector('.wht_tax') ? row.querySelector('.wht_tax').innerText.trim() : '';
+            let rawTotal = row.querySelector('.wht_total') ? row.querySelector('.wht_total').innerText.trim() : '';
+            let rawWalletChange = row.querySelector('.wht_wallet_change') ? row.querySelector('.wht_wallet_change').innerText.trim() : '';
+            let rawWalletBalance = row.querySelector('.wht_wallet_balance') ? row.querySelector('.wht_wallet_balance').innerText.trim() : '';
+
+            // Detect currency string (check total first, fallback to price or wallet change)
+            let currencyCol = extractCurrency(rawTotal) || extractCurrency(rawPrice) || extractCurrency(rawWalletChange);
+
+            // Strip text leaving only numbers for CSV values
+            let priceCol = extractNumber(rawPrice);
+            let taxCol = extractNumber(rawTax);
+            let totalCol = extractNumber(rawTotal);
+            let walletChangeCol = extractNumber(rawWalletChange);
+            let walletBalanceCol = extractNumber(rawWalletBalance);
+
+            // Handle mixed/multiple payment methods dynamically
+            let methods = {};
+            let paymentDiv = row.querySelector('.wht_type .wth_payment');
+            
+            if (paymentDiv) {
+                let subDivs = paymentDiv.querySelectorAll('div');
+                if (subDivs.length > 0) {
+                    subDivs.forEach(div => {
+                        let text = div.textContent.trim();
+                        let parts = text.split(/\s{2,}/);
+                        
+                        if (parts.length >= 2) {
+                            let method = parts.slice(1).join(' ').trim(); 
+                            methods[method] = extractNumber(parts[0].trim());
+                            paymentColumns.add(method);
+                        } else if (text) {
+                            let match = text.match(/^([^\d]*?\s*\d+[.,\d]*\s*[A-Za-z]*)\s+(.*)$/);
+                            if (match) {
+                                let method = match[2].trim();
+                                methods[method] = extractNumber(match[1].trim());
+                                paymentColumns.add(method);
+                            } else {
+                                methods[text] = totalCol;
+                                paymentColumns.add(text);
+                            }
+                        }
+                    });
+                } else {
+                    let method = paymentDiv.textContent.trim();
+                    if (method) {
+                        methods[method] = totalCol;
+                        paymentColumns.add(method);
+                    }
+                }
+            }
+
+            // Determine if this was a wallet-only purchase
+            let methodKeys = Object.keys(methods);
+            let isWalletOnly = methodKeys.length === 1 && methodKeys[0].toLowerCase().includes('wallet');
+
+            let regularPriceCol = isWalletOnly ? '' : priceCol;
+            let walletPriceCol = isWalletOnly ? priceCol : '';
+
+            let regularTotalCol = isWalletOnly ? '' : totalCol;
+            let walletTotalCol = isWalletOnly ? totalCol : '';
+            
+            data.push({
+                date: dateCol,
+                items: itemsCol,
+                currency: currencyCol,
+                regularPrice: regularPriceCol,
+                walletPrice: walletPriceCol,
+                discount: discountCol,
+                tax: taxCol,
+                methods: methods,
+                regularTotal: regularTotalCol,
+                walletTotal: walletTotalCol,
+                walletChange: walletChangeCol,
+                walletBalance: walletBalanceCol
+            });
+        });
+
+        // Set up headers with the separated Price & Total columns
+        let pmArray = Array.from(paymentColumns);
+        let header = ['Date', 'Items', 'Currency', 'Price', 'Wallet Price', 'Discount', 'Tax', ...pmArray, 'Total', 'Wallet Total', 'Wallet Change', 'Wallet Balance'];
+        
+        let csvStr = header.map(escapeCSV).join(',') + '\n';
+        
+        data.forEach(row => {
+            let rowArr = [
+                row.date,
+                row.items,
+                row.currency,
+                row.regularPrice,
+                row.walletPrice,
+                row.discount,
+                row.tax
+            ];
+            
+            // Line up dynamic column payments
+            pmArray.forEach(pm => {
+                rowArr.push(row.methods[pm] || '');
+            });
+            
+            rowArr.push(row.regularTotal);
+            rowArr.push(row.walletTotal);
+            rowArr.push(row.walletChange);
+            rowArr.push(row.walletBalance);
+            
+            csvStr += rowArr.map(escapeCSV).join(',') + '\n';
+        });
+
+        // Determine File Name
+        let headerEl = document.querySelector('h2.pageheader');
+        let baseName = headerEl ? headerEl.innerText.trim() : 'Steam Purchase History';
+        let currentDateTime = formatToYYYYMMDDHHMMSS(new Date());
+        let finalFileName = `${baseName} ${currentDateTime}.csv`;
+
+        // Export/Download sequence
+        let blob = new Blob([csvStr], { type: 'text/csv;charset=utf-8;' });
+        let url = URL.createObjectURL(blob);
+        let a = document.createElement('a');
+        a.href = url;
+        a.download = finalFileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+})();
