@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Steam Purchase History Exporter
 // @namespace    https://github.com/joex92/Steam-One-Click-Purchase-History-CSV-Exporter
-// @version      1.2
+// @version      1.3
 // @description  Export Steam account purchase history to a CSV file.
 // @author       JoeX92 & Gemini AI Pro
 // @match        https://store.steampowered.com/account/history*
@@ -261,6 +261,13 @@
                     }
                 }
             }
+
+            // Determine if this was a wallet-only purchase
+            let methodKeys = Object.keys(methods);
+            let isWalletOnly = methodKeys.length === 1 && methodKeys[0].toLowerCase().includes('wallet');
+
+            let regularTotalCol = isWalletOnly ? '' : totalCol;
+            let walletTotalCol = isWalletOnly ? totalCol : '';
             
             data.push({
                 date: dateCol,
@@ -270,15 +277,16 @@
                 discount: discountCol,
                 tax: taxCol,
                 methods: methods,
-                total: totalCol,
+                regularTotal: regularTotalCol,
+                walletTotal: walletTotalCol,
                 walletChange: walletChangeCol,
                 walletBalance: walletBalanceCol
             });
         });
 
-        // Set up headers with the new Currency column
+        // Set up headers with the separated Total columns
         let pmArray = Array.from(paymentColumns);
-        let header = ['Date', 'Items', 'Currency', 'Price', 'Discount', 'Tax', ...pmArray, 'Total', 'Wallet Change', 'Wallet Balance'];
+        let header = ['Date', 'Items', 'Currency', 'Price', 'Discount', 'Tax', ...pmArray, 'Total', 'Wallet Total', 'Wallet Change', 'Wallet Balance'];
         
         let csvStr = header.map(escapeCSV).join(',') + '\n';
         
@@ -297,7 +305,8 @@
                 rowArr.push(row.methods[pm] || '');
             });
             
-            rowArr.push(row.total);
+            rowArr.push(row.regularTotal);
+            rowArr.push(row.walletTotal);
             rowArr.push(row.walletChange);
             rowArr.push(row.walletBalance);
             
