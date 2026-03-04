@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Steam Purchase History Exporter
 // @namespace    https://github.com/joex92/Steam-One-Click-Purchase-History-CSV-Exporter
-// @version      1.1
+// @version      1.2
 // @description  Export Steam account purchase history to a CSV file.
 // @author       JoeX92 & Gemini AI Pro
 // @match        https://store.steampowered.com/account/history*
@@ -30,9 +30,26 @@
         // If the year is missing (Steam sometimes omits it for the current year)
         if (isNaN(d.getTime())) {
             d = new Date(steamDateStr + ", " + new Date().getFullYear());
-            if (isNaN(d.getTime())) return steamDateStr; // Fallback if still invalid
+            if (isNaN(d.getTime())) return steamDateStr; 
         }
         return formatToYYYYMMDDHHMMSS(d);
+    }
+
+    // Extracts only the numeric portion of a price string (including minus signs, decimals, commas)
+    function extractNumber(str) {
+        if (!str) return '';
+        let match = str.match(/-?[\d.,]+/);
+        return match ? match[0] : '';
+    }
+
+    // Extracts the currency code (e.g., USD) or symbol from a string
+    function extractCurrency(str) {
+        if (!str) return '';
+        let match = str.match(/[A-Z]{3}/i);
+        if (match) return match[0].toUpperCase();
+        
+        let symMatch = str.match(/[$€£¥]/);
+        return symMatch ? symMatch[0] : '';
     }
 
     // Wait for the page to finish loading before adding the UI
@@ -76,11 +93,8 @@
             
             // Start scrolling to trigger lazy loading
             loadAllRecords(
-                // Pause check callback
                 () => isPaused,
-                // Stop check callback
                 () => isStopped,
-                // Completion/Stop callback
                 () => {
                     exportDataToCSV();
                     // Reset UI
@@ -137,7 +151,6 @@
 
             window.scrollTo(0, document.body.scrollHeight);
             
-            // If the "Load More" button is visible, click it
             let loadMoreBtn = document.getElementById('load_more_button');
             if (loadMoreBtn && window.getComputedStyle(loadMoreBtn).display !== 'none') {
                 loadMoreBtn.click();
@@ -147,7 +160,6 @@
             let loadingEl = document.getElementById('wallet_history_loading');
             let isLoading = loadingEl && window.getComputedStyle(loadingEl).display !== 'none';
 
-            // Wait until the scroll height hasn't changed for ~6 seconds and nothing is loading
             if (currentHeight === prevHeight && !isLoading) {
                 unchangedCount++;
                 if (unchangedCount >= 6) { 
@@ -162,14 +174,12 @@
         }, 1000);
     }
 
-    // Helper for formatting CSV data cleanly
     function escapeCSV(value) {
         if (value == null) return '""';
         let str = value.toString().trim().replace(/"/g, '""');
         return `"${str}"`;
     }
 
-    // Gathers DOM data, organizes dynamically generated headers, and initiates download
     function exportDataToCSV() {
         let rows = document.querySelectorAll('.wallet_history_table tbody tr.wallet_table_row');
         let data = [];
@@ -182,11 +192,10 @@
             let itemsCol = '';
             let itemsTd = row.querySelector('.wht_items');
             if (itemsTd) {
-                // Steam items are separated by divs; replace new lines with pipes " | "
                 itemsCol = itemsTd.innerText.trim().replace(/\s*\n\s*/g, ' | ');
             }
             
-            let priceCol = '';
+            let rawPrice = '';
             let discountCol = '';
             let basePriceTd = row.querySelector('.wht_base_price');
             
@@ -196,16 +205,26 @@
                     let dPct = discountedDiv.querySelector('.wht_discount_pct');
                     let pOrig = discountedDiv.querySelector('.wht_original_price');
                     discountCol = dPct ? dPct.innerText.trim() : '';
-                    priceCol = pOrig ? pOrig.innerText.trim() : '';
+                    rawPrice = pOrig ? pOrig.innerText.trim() : '';
                 } else {
-                    priceCol = basePriceTd.innerText.trim();
+                    rawPrice = basePriceTd.innerText.trim();
                 }
             }
             
-            let taxCol = row.querySelector('.wht_tax') ? row.querySelector('.wht_tax').innerText.trim() : '';
-            let totalCol = row.querySelector('.wht_total') ? row.querySelector('.wht_total').innerText.trim() : '';
-            let walletChangeCol = row.querySelector('.wht_wallet_change') ? row.querySelector('.wht_wallet_change').innerText.trim() : '';
-            let walletBalanceCol = row.querySelector('.wht_wallet_balance') ? row.querySelector('.wht_wallet_balance').innerText.trim() : '';
+            let rawTax = row.querySelector('.wht_tax') ? row.querySelector('.wht_tax').innerText.trim() : '';
+            let rawTotal = row.querySelector('.wht_total') ? row.querySelector('.wht_total').innerText.trim() : '';
+            let rawWalletChange = row.querySelector('.wht_wallet_change') ? row.querySelector('.wht_wallet_change').innerText.trim() : '';
+            let rawWalletBalance = row.querySelector('.wht_wallet_balance') ? row.querySelector('.wht_wallet_balance').innerText.trim() : '';
+
+            // Detect currency string (check total first, fallback to price or wallet change)
+            let currencyCol = extractCurrency(rawTotal) || extractCurrency(rawPrice) || extractCurrency(rawWalletChange);
+
+            // Strip text leaving only numbers for CSV values
+            let priceCol = extractNumber(rawPrice);
+            let taxCol = extractNumber(rawTax);
+            let totalCol = extractNumber(rawTotal);
+            let walletChangeCol = extractNumber(rawWalletChange);
+            let walletBalanceCol = extractNumber(rawWalletBalance);
 
             // Handle mixed/multiple payment methods dynamically
             let methods = {};
@@ -216,18 +235,17 @@
                 if (subDivs.length > 0) {
                     subDivs.forEach(div => {
                         let text = div.textContent.trim();
-                        // Split by 2 or more spaces/tabs which reliably separates amount from source
                         let parts = text.split(/\s{2,}/);
                         
                         if (parts.length >= 2) {
                             let method = parts.slice(1).join(' ').trim(); 
-                            methods[method] = parts[0].trim();
+                            methods[method] = extractNumber(parts[0].trim());
                             paymentColumns.add(method);
                         } else if (text) {
                             let match = text.match(/^([^\d]*?\s*\d+[.,\d]*\s*[A-Za-z]*)\s+(.*)$/);
                             if (match) {
                                 let method = match[2].trim();
-                                methods[method] = match[1].trim();
+                                methods[method] = extractNumber(match[1].trim());
                                 paymentColumns.add(method);
                             } else {
                                 methods[text] = totalCol;
@@ -247,6 +265,7 @@
             data.push({
                 date: dateCol,
                 items: itemsCol,
+                currency: currencyCol,
                 price: priceCol,
                 discount: discountCol,
                 tax: taxCol,
@@ -257,9 +276,9 @@
             });
         });
 
-        // Set up the rearranged headers
+        // Set up headers with the new Currency column
         let pmArray = Array.from(paymentColumns);
-        let header = ['Date', 'Items', 'Price', 'Discount', 'Tax', ...pmArray, 'Total', 'Wallet Change', 'Wallet Balance'];
+        let header = ['Date', 'Items', 'Currency', 'Price', 'Discount', 'Tax', ...pmArray, 'Total', 'Wallet Change', 'Wallet Balance'];
         
         let csvStr = header.map(escapeCSV).join(',') + '\n';
         
@@ -267,12 +286,13 @@
             let rowArr = [
                 row.date,
                 row.items,
+                row.currency,
                 row.price,
                 row.discount,
                 row.tax
             ];
             
-            // Line up the dynamic column payments
+            // Line up dynamic column payments
             pmArray.forEach(pm => {
                 rowArr.push(row.methods[pm] || '');
             });
@@ -288,8 +308,6 @@
         let headerEl = document.querySelector('h2.pageheader');
         let baseName = headerEl ? headerEl.innerText.trim() : 'Steam Purchase History';
         let currentDateTime = formatToYYYYMMDDHHMMSS(new Date());
-        
-        // Use the requested format. (Note: Many OS replace the '/' and ':' with '_' or '-' when saving files automatically)
         let finalFileName = `${baseName} ${currentDateTime}.csv`;
 
         // Export/Download sequence
